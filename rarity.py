@@ -1,4 +1,8 @@
 from os.path import exists
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+from scipy.special import expit
+import numpy as np
 import requests
 import json
 
@@ -31,6 +35,7 @@ class Collection():
         self.load_collection()
         self.fetch_assets()
         self.fetch_transactions()
+        self.fetch_listings()
         self.set_properties()
         self.set_facets()
 
@@ -59,6 +64,11 @@ class Collection():
         self.total_tx_count = input['tx_count']
 
     def fetch_assets(self):
+        def append_asset(hit):
+            for name, metadata in hit.items():
+                self.assets[name] = metadata
+                print(f'Appended [{name}] to  assets.')
+
         if self.policy_id: return
         self.policy_id = input('Enter policy ID: ')
 
@@ -81,12 +91,12 @@ class Collection():
                     if not tx_metadata:
                         continue
                     hits = tx_metadata[0]['value'].get(self.policy_id)
-                    if not hits:
-                        continue
-                    for name, metadata in hits.items():
-                        self.assets[name] = metadata
-                        print(f'Appended [{name}] to  assets.')
-
+                    if not hits: continue
+                    if isinstance(hits, list):
+                        for hit in hits:
+                            append_asset(hit)                      
+                    elif isinstance(hits, dict):
+                        append_asset(hits)
             offset += 1
 
     # Assets must be set
@@ -97,6 +107,7 @@ class Collection():
         resp = requests.get(url, params=params).json()
         num_to_fetch = resp["tot"]
         num_to_fetch -= self.total_tx_count
+        if num_to_fetch < 10: return
 
         params["count"] = num_to_fetch
         print(f'Fetching {num_to_fetch} transactions for collection {self.name}.')
@@ -104,17 +115,37 @@ class Collection():
 
         for tx in resp["transactions"]:
             for asset_name in self.assets:
-                metadata = self.assets[asset_name]
-                if tx["display_name"] == metadata["name"]:
-                    if metadata.get("sales") is None: metadata["sales"] = []
+                asset = self.assets[asset_name]
+                if tx["display_name"] == asset["name"]:
+                    if asset.get("sales") is None: asset["sales"] = []
 
                     amount = tx["amount_lovelace"]
-                    sales = metadata["sales"]
+                    sales = asset["sales"]
                     if amount not in sales: sales.append(amount)
+                    if asset.get('price'): del asset['price']
                     print(json.dumps(sales, indent=2))
 
         self.total_tx_count = resp["tot"]
 
+    # Assets must be set
+    def fetch_listings(self):
+        url = f"https://server.jpgstoreapis.com/search/tokens?policyIds=[%22{self.policy_id}%22]"
+        params = {
+            'saleType': 'default',
+            'sortBy': 'recently-listed',
+            'verified': 'default',
+            'minPrice': "460000000",
+            'size': f"1000" }
+        
+        resp = requests.get(url, params=params).json()
+        for token in resp['tokens']:
+            for name in self.assets:
+                asset = self.assets[name]
+                if asset['name'] == token['display_name']:
+                    listing_price = int(token["listing_lovelace"]) / 1_000_000
+                    asset['price'] = listing_price
+    
+    # Assets must be set
     def set_properties(self):
         if self.properties:
             return
@@ -132,6 +163,7 @@ class Collection():
         for i in range(num_keys):
             self.properties.append(input('Enter key: '))
 
+    # Assets and properties must be set
     def set_facets(self):
         def increment_facet(property, value):
             facet_type = 'numericAttributes' if value.isnumeric() else 'stringAttributes'
@@ -149,14 +181,18 @@ class Collection():
         for asset in self.assets.values():
             for property in self.properties:
                 value = asset.get(property) or "None"
+                if ',' in value: value = value.split()
                 if isinstance(value, dict):
                     for inner_property, inner_value in value.items():
                         increment_facet(inner_property, inner_value)
+                elif isinstance(value, list):
+                    for element in value:
+                        increment_facet(property, element)
                 else:
                     increment_facet(property, value)
 
-
-    # Properties and facets must be set
+        
+    # Properties, facets, and assets must be set
     def calc_statistical_rarity(self):
         def calc_rarity_score(prop, val):
             facet_type = 'numericAttributes' if val.isnumeric() else 'stringAttributes'
@@ -167,14 +203,18 @@ class Collection():
             rarity_score = 0
             for property in self.properties:
                 value = asset.get(property) or "None"
+                if ',' in value: value = value.split()
                 if isinstance(value, dict):
                     for inner_property, inner_value in value.items():
                         rarity_score += calc_rarity_score(inner_property, inner_value)
+                elif isinstance(value, list):
+                    for element in value:
+                        rarity_score += calc_rarity_score(property, element)
                 else:
                     rarity_score += calc_rarity_score(property, value)
             asset['rarity'] = rarity_score
 
-    # rarity and sales must be set
+    # rarity and sales (tx) must be set
     def calc_rarity_unit_value(self):
         rarity_score_total =  0
         lovelace_total = 0
@@ -184,9 +224,11 @@ class Collection():
             sales = asset.get('sales')
             if sales:
                 rarity_score_total += asset['rarity']
-                # lovelace_total += sum(sales) / len(sales)
-                lovelace_total += sales[0]
+                lovelace_total += sum(sales) / len(sales)
+                # lovelace_total += sales[0]
+                # lovelace_total += max(sales)
         self.rarity_unit_value = ( lovelace_total / rarity_score_total ) / 1_000_000
+        print(self.rarity_unit_value)
     
     # rarity unit value must be set
     def set_value_estimate(self):
@@ -194,18 +236,77 @@ class Collection():
             asset = self.assets[name]
             asset['value'] = self.rarity_unit_value * asset['rarity']
 
+            if not asset.get('price'):  
+                asset['profit'] = float('-inf')
+                continue
+            # set profit estimate (price must be set)
+            asset['profit'] = asset['value'] - asset['price']
+            
+    # rarity scores must be set
+    def set_ranks(self):
+        names = sorted(self.assets.items(), key=lambda asset: -asset[1].get('rarity'))
+        for rank, name in enumerate(names):
+            self.assets[name[0]]['rank'] = rank + 1
+
     def sort_assets(self):
         self.assets = dict(
-            sorted(self.assets.items(), key=lambda asset: -asset[1]['rarity']))
+            sorted(self.assets.items(), key=lambda asset: (
+                -asset[1].get('profit') or float('-inf'), 
+                asset[1].get('price') or float('inf')
+                )))
+
+    def scatter(self):
+        def model_f(x, a, b, c):
+            return a*(x-b)**2 + c   
+
+        
+
+        def sigmoid(x, L ,x0, k, b):
+            return L * expit(k*(x-x0)) + b
+
             
+        rarity = []
+        prices = []
+        for name in self.assets:
+            asset = self.assets[name]
+            if not asset.get('sales'): continue
+            rarity.append(asset['rarity'])
+            prices.append((sum(asset['sales']) / len(asset['sales'])) / 1_000_000)
+        
+        x_data = np.array(rarity)
+        y_data = np.array(prices)
+        plt.plot(x_data, y_data, 'o')
+
+        popt, pcov = curve_fit(sigmoid, x_data, y_data, p0=[max(y_data), np.median(x_data), 1, min(y_data)])
+        x_model = np.linspace(min(x_data), max(x_data))
+        y_model = sigmoid(x_model, *popt)
+        plt.plot(x_model, y_model)
+
+        plt.xlabel('rarity')
+        plt.ylabel('price')
+
+        plt.xscale('log')
+        plt.grid()
+        plt.savefig('graph.png')        
+
+        plt.clf()
+        plt.imshow(np.log(np.abs(pcov)))
+        plt.colorbar()
+        plt.savefig('pcov.png')
 
 
 
 if __name__ == '__main__':
     name = input('Enter collection name: ')
+    # name = 'ClumsyGhosts'
+    # name = 'Ugly_Bros_Definitive'
     collection = Collection(name)
     collection.calc_statistical_rarity()
     collection.calc_rarity_unit_value()
     collection.set_value_estimate()
+    collection.set_ranks()
     collection.sort_assets()
+
+    collection.scatter()
+
     collection.save_collection()
