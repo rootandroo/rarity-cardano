@@ -5,6 +5,7 @@ from scipy.special import expit
 import numpy as np
 import requests
 import json
+import sys
 
 
 class Collection():
@@ -94,7 +95,7 @@ class Collection():
                     if not hits: continue
                     if isinstance(hits, list):
                         for hit in hits:
-                            append_asset(hit)                      
+                            append_asset(hit)
                     elif isinstance(hits, dict):
                         append_asset(hits)
             offset += 1
@@ -136,7 +137,7 @@ class Collection():
             'verified': 'default',
             'minPrice': "460000000",
             'size': f"1000" }
-        
+
         resp = requests.get(url, params=params).json()
         for token in resp['tokens']:
             for name in self.assets:
@@ -144,7 +145,7 @@ class Collection():
                 if asset['name'] == token['display_name']:
                     listing_price = int(token["listing_lovelace"]) / 1_000_000
                     asset['price'] = listing_price
-    
+
     # Assets must be set
     def set_properties(self):
         if self.properties:
@@ -170,7 +171,7 @@ class Collection():
             facet = f'{facet_type}.{property}'
             if facet not in self.facets:
                 self.facets[facet] = {}
-            
+
             if value not in self.facets[facet]:
                 self.facets[facet][value] = 1
             else:
@@ -191,7 +192,7 @@ class Collection():
                 else:
                     increment_facet(property, value)
 
-        
+
     # Properties, facets, and assets must be set
     def calc_statistical_rarity(self):
         def calc_rarity_score(prop, val):
@@ -214,34 +215,19 @@ class Collection():
                     rarity_score += calc_rarity_score(property, value)
             asset['rarity'] = rarity_score
 
-    # rarity and sales (tx) must be set
-    def calc_rarity_unit_value(self):
-        rarity_score_total =  0
-        lovelace_total = 0
-        for name in self.assets:
-            asset = self.assets[name]
-
-            sales = asset.get('sales')
-            if sales:
-                rarity_score_total += asset['rarity']
-                lovelace_total += sum(sales) / len(sales)
-                # lovelace_total += sales[0]
-                # lovelace_total += max(sales)
-        self.rarity_unit_value = ( lovelace_total / rarity_score_total ) / 1_000_000
-        print(self.rarity_unit_value)
-    
     # rarity unit value must be set
-    def set_value_estimate(self):
+    def set_value_estimates(self):
+        model = self.obtain_model()
         for name in self.assets:
             asset = self.assets[name]
-            asset['value'] = self.rarity_unit_value * asset['rarity']
+            asset['value'] = model(asset['rarity'])
 
-            if not asset.get('price'):  
+            if not asset.get('price'):
                 asset['profit'] = float('-inf')
                 continue
             # set profit estimate (price must be set)
             asset['profit'] = asset['value'] - asset['price']
-            
+
     # rarity scores must be set
     def set_ranks(self):
         names = sorted(self.assets.items(), key=lambda asset: -asset[1].get('rarity'))
@@ -251,62 +237,73 @@ class Collection():
     def sort_assets(self):
         self.assets = dict(
             sorted(self.assets.items(), key=lambda asset: (
-                -asset[1].get('profit') or float('-inf'), 
+                -asset[1].get('profit') or float('-inf'),
                 asset[1].get('price') or float('inf')
                 )))
 
-    def scatter(self):
-        def model_f(x, a, b, c):
-            return a*(x-b)**2 + c   
-
-        
-
+    def obtain_model(self):
         def sigmoid(x, L ,x0, k, b):
             return L * expit(k*(x-x0)) + b
 
-            
+        def create_model(popt):
+            def model(x):
+                return sigmoid(x, *popt)
+            return model
+
         rarity = []
         prices = []
         for name in self.assets:
             asset = self.assets[name]
             if not asset.get('sales'): continue
+            # rarity.extend([asset['rarity']]* len(asset['sales']))
+            # prices.extend([sale / 1_000_000 for sale in asset['sales']])
+
+            # average
+            # rarity.append(asset['rarity'])
+            # prices.append((sum(asset['sales']) / len(asset['sales'])) / 1_000_000)
+            
+            #max 
             rarity.append(asset['rarity'])
-            prices.append((sum(asset['sales']) / len(asset['sales'])) / 1_000_000)
-        
+            prices.append(max(asset['sales']) / 1_000_000)
+            
         x_data = np.array(rarity)
         y_data = np.array(prices)
         plt.plot(x_data, y_data, 'o')
 
-        popt, pcov = curve_fit(sigmoid, x_data, y_data, p0=[max(y_data), np.median(x_data), 1, min(y_data)])
+        popt, pcov = curve_fit(sigmoid, x_data, y_data, p0=[max(y_data), np.median(x_data), 1, min(y_data)], maxfev=10000)
         x_model = np.linspace(min(x_data), max(x_data))
         y_model = sigmoid(x_model, *popt)
-        plt.plot(x_model, y_model)
 
+        plt.plot(x_model, y_model)
+        plt.xscale('log')
         plt.xlabel('rarity')
         plt.ylabel('price')
-
-        plt.xscale('log')
         plt.grid()
-        plt.savefig('graph.png')        
+        plt.savefig('graph.png')
 
         plt.clf()
+
         plt.imshow(np.log(np.abs(pcov)))
         plt.colorbar()
         plt.savefig('pcov.png')
 
+        return create_model(popt)
+
+
+
 
 
 if __name__ == '__main__':
-    name = input('Enter collection name: ')
+    if len(sys.argv) == 1:
+        name = input('Enter collection name: ')
+    else:
+        name = sys.argv[1]
     # name = 'ClumsyGhosts'
     # name = 'Ugly_Bros_Definitive'
+
     collection = Collection(name)
     collection.calc_statistical_rarity()
-    collection.calc_rarity_unit_value()
-    collection.set_value_estimate()
+    collection.set_value_estimates()
     collection.set_ranks()
     collection.sort_assets()
-
-    collection.scatter()
-
     collection.save_collection()

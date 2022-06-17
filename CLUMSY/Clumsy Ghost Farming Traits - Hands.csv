@@ -1,0 +1,23 @@
+Hands,Quantity,Percentage,Count,Stat,Biome,Biome Roll modifier
+None,4053,40.53%,,,,
+Gamepad,369,3.69%,1,smart,,
+Ghost on string,355,3.55%,1,luck,,
+Rifle,342,3.42%,1,stamina,,
+Shotgun,330,3.30%,1,stamina,,
+Barbell,323,3.23%,1,stamina,,
+Guitar,321,3.21%,1,luck,,
+Hockey stick,309,3.09%,2,stamina,,
+Knife,296,2.96%,2,stamina,,
+Shuriken,278,2.78%,2,speed,,
+Scimitar,271,2.71%,2,stamina,,
+Moon wand,270,2.70%,3,luck,,
+Pencil,270,2.70%,3,smart,,
+Tennis racket,267,2.67%,3,speed,,
+Wrench,255,2.55%,3,smart,,
+Shovel,253,2.53%,3,stamina,"meadow,snow,desert",1
+Broomstick,252,2.52%,3,luck,,
+Hammer,250,2.50%,3,stamina,desert,1
+Crowbar,245,2.45%,3,stamina,alien,1
+Fishing rod,237,2.37%,3,luck,meadow,2
+Magic wand,236,2.36%,3,luck,,
+Piercing,218,2.18%,3,luck,,
