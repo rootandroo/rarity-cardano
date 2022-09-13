@@ -7,7 +7,8 @@ import uvicorn
 from projects.models import ProjectModel, UpdateProjectModel
 from collections_.models import CollectionModel, UpdateCollectionModel
 from assets.models import AssetModel, UpdateAssetModel
-
+from collections_.routers import get_collections_router
+from assets.routers import get_assets_router
 from routers import get_router
 
 app = FastAPI()
@@ -21,6 +22,8 @@ async def startup_db_client():
     app.include_router(get_router(app, ProjectModel, UpdateProjectModel, 'project'))
     app.include_router(get_router(app, CollectionModel, UpdateCollectionModel, 'collection'))
     app.include_router(get_router(app, AssetModel, UpdateAssetModel, 'asset'))
+    app.include_router(get_collections_router(app))
+    app.include_router(get_assets_router(app))
 
 @app.on_event('shutdown')
 async def shutdown_db_client():
