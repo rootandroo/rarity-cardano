@@ -3,12 +3,14 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from typing import List
 
-from .models import CollectionModel
-
+from .models import CollectionModel, UpdateCollectionModel
+from routers import get_router
 
 def get_collections_router(app):
+    app.include_router(get_router(app, CollectionModel, UpdateCollectionModel, 'collection'))
+
     collections_router = APIRouter(
-        prefix='/collections',
+        prefix='/collection',
         tags=['collections']
     )
 
@@ -19,4 +21,11 @@ def get_collections_router(app):
             collections.append(doc)
         return collections
     
+    @collections_router.get("/policy/{policy_id}", response_model=CollectionModel, response_description="Get collection by policy_id")
+    async def show_by_policy_id(policy_id: str, request: Request):
+        if (collection := await request.app.db['collections'].find_one({"policy_id": policy_id})) is not None:
+            return collection
+
+        raise HTTPException(status_code=404, detail=f"Collection [{policy_id}] not found")
+
     return collections_router

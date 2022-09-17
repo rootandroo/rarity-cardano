@@ -35,7 +35,7 @@ def get_router(app, Model, UpdateModel, name):
 
     @router.get("/{id}", response_model=Model, response_description=f"Get a single {name}")
     async def show(id: str, request: Request):
-        if object := request.app.db[db_name].find_one({"_id": id}) is not None:
+        if (object := await request.app.db[db_name].find_one({"_id": id})) is not None:
             return object
 
         raise HTTPException(status_code=404, detail=f"{name} {id} not found")
@@ -60,7 +60,7 @@ def get_router(app, Model, UpdateModel, name):
             return existing_object
         
         raise HTTPException(status_code=404, detail=f'{name} {id} not found')
-    update.__name__ = f'update_{db_name}'
+    update.__name__ = f'update_{name}'
 
     @router.delete('/{id}', response_model= Model, response_description=f'Delete a {name}')
     async def delete(id: str, request: Request, response: Response):

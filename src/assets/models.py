@@ -14,10 +14,9 @@ class AssetModel(BaseModel):
         allow_population_by_field_name = True
         schema_extra = {
             "example": {
-                "id": "0f0b4852-630d-455d-8c29-bb83fa7adcf9",
                 "name":"Asset0000",
-                "rarity": 0,
-                "metadata": {}
+                "metadata": {},
+                "collection": "7abad1ee1a3ca70010f9c61685c4"
             }
         }
 
