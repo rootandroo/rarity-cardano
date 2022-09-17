@@ -1,6 +1,8 @@
+import json
 from fastapi import APIRouter, Body, Request, Response, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
+from pymongo import UpdateOne
 from typing import List
 
 from .models import AssetModel, UpdateAssetModel
@@ -20,9 +22,8 @@ def get_assets_router(app):
             assets.append(doc)
         return assets
     
-    @assets_router.post("/bulk/", response_model=AssetModel, response_description=f"Bulk insert assets")
+    @assets_router.post("/bulk/", response_model=AssetModel, response_description="Bulk insert assets")
     async def bulk_create(request: Request, assets: List[AssetModel] = Body(...)):
-        print(assets)
         assets = jsonable_encoder(assets)
 
         new_assets = await request.app.db['assets'].insert_many(assets)
@@ -31,6 +32,15 @@ def get_assets_router(app):
             status_code=status.HTTP_201_CREATED, content=f'Created {len(new_assets.inserted_ids)} assets'
         )
     
-    return assets_router
+    @assets_router.put("/bulk/", response_model=AssetModel, response_description="Bulk update assets")
+    async def bulk_update(request: Request, assets: List[UpdateAssetModel] = Body(...)):
+        assets = jsonable_encoder(assets)
+        operations = []
+        for asset in assets:
+            filter = {"name": asset['name'], "collection": asset['collection']}
+            update = {"$set": { "rarity": asset['rarity'] }}
+            operations.append(UpdateOne(filter, update))
 
-    
+        updated_assets = await request.app.db['assets'].bulk_write(operations)
+        return JSONResponse(content=f'Updated {updated_assets.modified_count} assets')
+    return assets_router

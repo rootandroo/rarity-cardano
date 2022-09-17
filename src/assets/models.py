@@ -24,6 +24,7 @@ class UpdateAssetModel(BaseModel):
     name: Optional[str]
     rarity: Optional[int]
     metadata: Optional[dict]
+    collection: str
     
     class Config:
         schema_extra = {
