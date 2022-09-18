@@ -1,3 +1,4 @@
+from enum import unique
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING
 import conf
@@ -12,3 +13,6 @@ async def init_db(app):
 
     collection_index = [("policy_id", DESCENDING)]
     await app.db["collections"].create_index(collection_index, unique=True)
+    
+    project_index = [("name", ASCENDING)]
+    await app.db["projects"].create_index(project_index, unique=True)
