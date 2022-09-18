@@ -7,9 +7,16 @@ import conf
 class Project:
     def __init__(self, name):
         self.name = name
+        
+    def get_project(self):
+        print(f"Fetching project [{self.name}] from database ...")
+        url = f"{conf.DB_ENDPOINT}/project/name/{self.name}"
+        resp = requests.get(url, json={"name": self.name})
+        if resp.ok:
+            return resp.json()
 
     def save_project(self):
-        print(f"    Inserting project [{self.name}] into database ...")
+        print(f"Inserting project [{self.name}] into database ...")
         url = f"{conf.DB_ENDPOINT}/project/"
         resp = requests.post(url, json={"name": self.name})
         return resp.json()
@@ -23,13 +30,12 @@ class Collection:
         self.policy_id = policy_id
         self.tx_count = 0
         self.assets = []
+        self.new_assets = []
         self.properties = []
         self.facets = {}
         self.data = {}
 
     def fetch_assets(self):
-        new_assets = []
-
         def append_asset(asset):
             for name, metadata in asset.items():
                 if any(asset["name"] == name for asset in self.assets):
@@ -40,14 +46,14 @@ class Collection:
                     "collection": self.policy_id,
                 }
                 self.assets.append(asset)
-                new_assets.append(asset)
+                self.new_assets.append(asset)
 
         onchain_count = Collection.client.get_asset_count(self.policy_id)
 
         if len(self.assets) == int(onchain_count):
             return
 
-        print(f"    Fetching assets for collection [{self.name}] ...")
+        print(f"Fetching assets for collection [{self.name}] ...")
         # Query onchain metadata until all the new assets are in working memory
         offset = 0
         while len(self.assets) != int(onchain_count):
@@ -71,7 +77,6 @@ class Collection:
                 elif isinstance(hits, dict):
                     append_asset(hits)
             offset += 1
-        return new_assets
 
     def load_collection(self):
         url = f"{conf.DB_ENDPOINT}/collection/policy/{self.policy_id}"
@@ -119,15 +124,15 @@ class Collection:
         print(f"    Loaded {len(self.assets)} assets into memory.")
 
     # Bulk save new assets
-    def save_new_assets(self, assets):
-        if not assets:
-            return
-        print(f"    Inserting {len(assets)} assets to database ...")
+    def save_new_assets(self):
+        if not self.new_assets: return
+        print(f"Inserting {len(self.new_assets)} assets to database ...")
         url = f"{conf.DB_ENDPOINT}/asset/bulk/"
-        requests.post(url, json=assets)
+        requests.post(url, json=self.new_assets)
 
     def bulk_update_assets(self):
-        print(f"    Bulk updating {len(self.assets)} assets ...")
+        if not self.new_assets: return
+        print(f"Bulk updating {len(self.assets)} assets ...")
         url = f"{conf.DB_ENDPOINT}/asset/bulk/"
         requests.put(url, json=self.assets)
 
@@ -145,10 +150,9 @@ class Collection:
             else:
                 self.facets[facet][value] += 1
 
-        if self.facets:
-            return
+        if not self.new_assets: return
 
-        print(" Setting facets ...")
+        print("Setting facets ...")
         for asset in self.assets:
             metadata = asset["metadata"]
             for property in self.properties:
@@ -171,11 +175,10 @@ class Collection:
 
     # Set properties to include when evaluating rarity
     def set_properties(self):
-        if self.properties:
-            return
+        if not self.new_assets: return
 
         attributes = dict()
-        print(f"    Setting properties for collection [{self.name}] ...")
+        print(f"Setting properties for collection [{self.name}] ...")
         for asset in self.assets:
             metadata = asset["metadata"]
             for key, value in metadata.items():
@@ -184,14 +187,15 @@ class Collection:
                 if len(attributes[key]) < 2:
                     attributes[key].append(value)
         print(json.dumps(attributes, indent=2))
-        print(attributes.keys())
+        print(list(attributes.keys()))
 
-        num_keys = int(input("  Enter number of keys to include: "))
+        num_keys = int(input("Enter number of keys to include: "))
         for i in range(num_keys):
-            self.properties.append(input("  Enter key: "))
+            self.properties.append(input("Enter key: "))
 
     def calc_statistical_rarity(self):
-        print(f"    Calculating string statistical rarity for collection [{self.name}] ...")
+        if not self.new_assets:  return
+        print(f"Calculating string statistical rarity for collection [{self.name}] ...")
 
         def calc_rarity_score(prop, val):
             facet_type = "numericAttributes" if val.isnumeric() else "stringAttributes"
@@ -216,16 +220,19 @@ class Collection:
 
 def create_project(name):
     project = Project(name)
-    return project.save_project()
+    instance = project.get_project()
+    if not instance: 
+        instance = project.save_project()
+    return instance
 
-def create_collection(name, policy_id, project_id):
+def update_collection(name, policy_id, project_id):
     collection = Collection(name, policy_id)
     collection.load_collection()
     collection.load_assets()
-    new_assets = collection.fetch_assets()
+    collection.fetch_assets()
     collection.set_properties()
     collection.set_facets()
-    collection.save_new_assets(new_assets)
+    collection.save_new_assets()
     collection.save_collection(project_id)
     collection.calc_statistical_rarity()
     collection.bulk_update_assets()
@@ -233,4 +240,7 @@ def create_collection(name, policy_id, project_id):
 if __name__ == "__main__":
     project = create_project(name='Clumsy Studios')
     policy_id = 'b000e9f3994de3226577b4d61280994e53c07948c8839d628f4a425a'
-    create_collection(name='Clumsy Ghosts', policy_id=policy_id, project_id=project['_id'])
+    update_collection(name='Clumsy Ghosts', policy_id=policy_id, project_id=project['_id'])
+
+    policy_id = 'b000e43ed65c89e305bdb5920001558d9f642f3488154b2552a3ad63'
+    update_collection(name='Ghostwatch', policy_id=policy_id, project_id=project['_id'])
