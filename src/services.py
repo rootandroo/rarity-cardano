@@ -1,3 +1,4 @@
+import collections
 import requests
 import json
 
@@ -25,17 +26,24 @@ class Project:
 class Collection:
     client = GQLClient()
 
-    def __init__(self, name, policy_id):
+
+    def __init__(self, name, policy_id, project_id):
+        # Collection
         self.name = name
+        self.project_id = project_id
         self.policy_id = policy_id
         self.tx_count = 0
-        self.assets = []
-        self.new_assets = []
         self.properties = []
         self.facets = {}
-        self.data = {}
+
+        # Assets
+        self.assets = []
+        self.new_assets = []
 
     def fetch_assets(self):
+        """
+        Check for new assets onchain and store them in self.new_assets
+        """
         def append_asset(asset):
             for name, metadata in asset.items():
                 if any(asset["name"] == name for asset in self.assets):
@@ -49,9 +57,7 @@ class Collection:
                 self.new_assets.append(asset)
 
         onchain_count = Collection.client.get_asset_count(self.policy_id)
-
-        if len(self.assets) == int(onchain_count):
-            return
+        if len(self.assets) == int(onchain_count): return
 
         print(f"Fetching assets for collection [{self.name}] ...")
         # Query onchain metadata until all the new assets are in working memory
@@ -78,36 +84,28 @@ class Collection:
                     append_asset(hits)
             offset += 1
 
+    
     def load_collection(self):
+        """
+        Loads collection from API into Collection Object.
+        """
         url = f"{conf.DB_ENDPOINT}/collection/policy/{self.policy_id}"
         resp = requests.get(url)
         if not resp.ok:
             return
 
         collection = resp.json()
-        self.data = collection
         self.name = collection["name"]
         self.tx_count = collection["tx_count"]
         self.properties = collection["properties"]
         self.facets = collection["facets"]
         print(f"    Loaded collection [{self.name}] into memory.")
 
-    def save_collection(self, project_id):
-        if self.data:
-            return
-
-        url = f"{conf.DB_ENDPOINT}/collection/"
-        collection = {
-            "name": self.name,
-            "tx_count": self.tx_count,
-            "properties": self.properties,
-            "policy_id": self.policy_id,
-            "facets": self.facets,
-            "project": project_id,
-        }
-        requests.post(url, json=collection)
 
     def load_assets(self):
+        """
+        Loads assets from API into Collection Object.
+        """
         url = f"{conf.DB_ENDPOINT}/asset/policy/{self.policy_id}"
         resp = requests.get(url)
         if not resp.ok:
@@ -123,20 +121,45 @@ class Collection:
             )
         print(f"    Loaded {len(self.assets)} assets into memory.")
 
-    # Bulk save new assets
+
+    def save_collection(self):
+        """
+        Saves collection if collection properties have been altered.
+        """
+        url = f"{conf.DB_ENDPOINT}/collection/"
+        collection = {
+            "name": self.name,
+            "tx_count": self.tx_count,
+            "properties": self.properties,
+            "policy_id": self.policy_id,
+            "facets": self.facets,
+            "project": self.project_id,
+        }
+        requests.post(url, json=collection)
+
+
     def save_new_assets(self):
         if not self.new_assets: return
+
         print(f"Inserting {len(self.new_assets)} assets to database ...")
         url = f"{conf.DB_ENDPOINT}/asset/bulk/"
         requests.post(url, json=self.new_assets)
 
+
     def bulk_update_assets(self):
-        if not self.new_assets: return
+        """
+        Update assets if their metadata or rarity scores were changed.
+        """
         print(f"Bulk updating {len(self.assets)} assets ...")
         url = f"{conf.DB_ENDPOINT}/asset/bulk/"
         requests.put(url, json=self.assets)
 
+
     def set_facets(self):
+        """
+        Set facets for evaulating rarity if additional assets were added or if 
+        assets' metadata were changed. 
+        """
         def increment_facet(property, value):
             facet_type = (
                 "numericAttributes" if value.isnumeric() else "stringAttributes"
@@ -149,8 +172,6 @@ class Collection:
                 self.facets[facet][value] = 1
             else:
                 self.facets[facet][value] += 1
-
-        if not self.new_assets: return
 
         print("Setting facets ...")
         for asset in self.assets:
@@ -166,17 +187,12 @@ class Collection:
                 else:
                     increment_facet(property, value)
 
-    # Helper function to extract value given a trait
-    def get_value(self, metadata, property):
-        value = metadata.get(property) or "None"
-        if "," in value:
-            value = value.split()
-        return value
 
-    # Set properties to include when evaluating rarity
     def set_properties(self):
-        if not self.new_assets: return
-
+        """
+        Set properties for evaulating rarity if additional assets were added or if 
+        assets' metadata were changed
+        """
         attributes = dict()
         print(f"Setting properties for collection [{self.name}] ...")
         for asset in self.assets:
@@ -193,8 +209,8 @@ class Collection:
         for i in range(num_keys):
             self.properties.append(input("Enter key: "))
 
+
     def calc_statistical_rarity(self):
-        if not self.new_assets:  return
         print(f"Calculating string statistical rarity for collection [{self.name}] ...")
 
         def calc_rarity_score(prop, val):
@@ -218,29 +234,45 @@ class Collection:
                     rarity_score += calc_rarity_score(property, value)
             asset["rarity"] = rarity_score
 
-def create_project(name):
+
+    # Helper function to extract value given a trait
+    def get_value(self, metadata, property):
+        value = metadata.get(property) or "None"
+        if "," in value:
+            value = value.split()
+        return value
+
+
+
+def find_or_create_project(name):
     project = Project(name)
     instance = project.get_project()
     if not instance: 
         instance = project.save_project()
     return instance
 
-def update_collection(name, policy_id, project_id):
-    collection = Collection(name, policy_id)
-    collection.load_collection()
-    collection.load_assets()
-    collection.fetch_assets()
+def update_collection(collection):
     collection.set_properties()
     collection.set_facets()
-    collection.save_new_assets()
-    collection.save_collection(project_id)
+    collection.save_collection()
     collection.calc_statistical_rarity()
     collection.bulk_update_assets()
+    return collection
+
+def new_collection(name, policy_id, project_id):
+    collection = Collection(name, policy_id, project_id)
+    collection.fetch_assets()
+    collection.save_new_assets()
+    collection.set_properties()
+    collection.set_facets()
+    collection.save_collection()
+    collection.calc_statistical_rarity()
+    collection.bulk_update_assets()
+    return collection
 
 if __name__ == "__main__":
-    project = create_project(name='Clumsy Studios')
     policy_id = 'b000e9f3994de3226577b4d61280994e53c07948c8839d628f4a425a'
-    update_collection(name='Clumsy Ghosts', policy_id=policy_id, project_id=project['_id'])
 
-    policy_id = 'b000e43ed65c89e305bdb5920001558d9f642f3488154b2552a3ad63'
-    update_collection(name='Ghostwatch', policy_id=policy_id, project_id=project['_id'])
+    # New or Existing Project
+    project = find_or_create_project(name='Clumsy Studios')
+

@@ -38,7 +38,7 @@ def get_assets_router(app):
         operations = []
         for asset in assets:
             filter = {"name": asset['name'], "collection": asset['collection']}
-            update = {"$set": { "rarity": asset['rarity'] }}
+            update = {"$set": { "rarity": asset['rarity'], "metadata": asset['metadata'] }}
             operations.append(UpdateOne(filter, update))
 
         updated_assets = await request.app.db['assets'].bulk_write(operations)
